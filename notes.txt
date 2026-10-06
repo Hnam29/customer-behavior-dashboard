@@ -1,0 +1,17 @@
+- Xem nội dung một file Parquet
+.venv\Scripts\python.exe -c "import pandas as pd; df = pd.read_parquet('data/snapshots/[YYYY-MM-DD]/[ten_file].parquet'); print(df.shape); print(df.head(10))"
+
+- Hướng dẫn push update
+Thay đổi	                                  Lệnh
+app.py hoặc core/*.py hoặc pipeline/*.py	  docker compose restart dashboard
+pipeline/*.py (logic Airflow/email)	          docker compose restart airflow-scheduler airflow-dag-processor airflow-apiserver
+Cả hai	                                      docker compose restart dashboard airflow-scheduler airflow-dag-processor airflow-apiserver
+dashboard/Dockerfile hoặc requirements.txt	  docker compose build dashboard && docker compose up -d dashboard
+airflow/Dockerfile hoặc requirements.txt	  docker compose build airflow-apiserver && docker compose up -d airflow-scheduler airflow-dag-processor airflow-apiserver
+
+- Gửi email mẫu đầy đủ thông tin:
+.venv\Scripts\python.exe -m pipeline.notify
+
+- Chạy pipeline bằng tay (cần dùng python trong .venv để đọc đúng file .env):
+.venv\Scripts\python.exe -m pipeline.run --as-of [YYYY-MM-DD]
+(hoặc kích hoạt môi trường ảo: .venv\Scripts\activate rồi chạy python -m pipeline.run)

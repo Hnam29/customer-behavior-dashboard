@@ -1,0 +1,12 @@
+[theme]
+base = "light"
+primaryColor = "#0E6E8C"
+backgroundColor = "#F6F8F9"
+secondaryBackgroundColor = "#E8EEF1"
+textColor = "#1D2A3A"
+borderColor = "#D5DEE4"
+baseRadius = "0.35rem"
+font = "Be Vietnam Pro:https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap, sans-serif"
+
+[server]
+maxUploadSize = 200

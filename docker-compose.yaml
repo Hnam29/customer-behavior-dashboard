@@ -1,0 +1,163 @@
+# Airflow 3.3.2 chạy trên 1 máy (LocalExecutor), rút gọn từ docker-compose chính thức:
+# bỏ Redis/Celery worker/Flower cho nhẹ, thêm ODBC Driver 18 và mã nguồn của luồng dữ liệu.
+#
+#   docker compose build            # lần đầu, hoặc khi đổi airflow/Dockerfile, requirements
+#   docker compose up airflow-init  # lần đầu: tạo CSDL nội bộ của Airflow + tài khoản đăng nhập
+#   docker compose up -d            # chạy nền; Airflow: http://localhost:8080, dashboard: http://localhost:8501
+#   docker compose down             # dừng
+#
+# Thư mục ./data được dùng chung với dashboard chạy trên Windows.
+x-airflow-common:
+  &airflow-common
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
+  image: customer-behavior-airflow:3.3.2
+  env_file:
+    - .env
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:-}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Ho_Chi_Minh
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-hay-doi-chuoi-bi-mat-nay}
+    AIRFLOW__API_AUTH__JWT_ISSUER: airflow
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # đường dẫn bên trong container (ghi đè giá trị trong .env)
+    PYTHONPATH: /opt/airflow/project
+    DATA_DIR: /opt/airflow/project/data
+    SQL_FILE: /opt/airflow/project/pipeline/sql/extract_transactions.sql
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/config:/opt/airflow/config
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./core:/opt/airflow/project/core
+    - ./pipeline:/opt/airflow/project/pipeline
+    - ./data:/opt/airflow/project/data
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:            # CSDL nội bộ của Airflow (lưu lịch chạy, trạng thái task), không phải dữ liệu bán hàng
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -v -p /opt/airflow/{logs,dags,plugins,config} /opt/airflow/project/data
+        /entrypoint airflow version
+        /entrypoint airflow config list >/dev/null
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,plugins,config} /opt/airflow/project/data
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow}
+    user: "0:0"
+
+  dashboard:           # Dashboard Streamlit: http://localhost:8501 (chay doc lap voi Airflow)
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    image: customer-behavior-dashboard:1.0
+    ports:
+      - "8501:8501"          # chi xem tren may nay: doi thanh "127.0.0.1:8501:8501"
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - ./:/app:ro           # ma nguon + thu muc data, chi doc: dashboard khong ghi gi ra o dia
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+
+  airflow-cli:         # docker compose run --rm airflow-cli airflow dags list
+    <<: *airflow-common
+    profiles:
+      - debug
+    environment:
+      <<: *airflow-common-env
+      CONNECTION_CHECK_MAX_COUNT: "0"
+    command:
+      - bash
+      - -c
+      - airflow
+
+volumes:
+  postgres-db-volume:

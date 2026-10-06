@@ -1,0 +1,29 @@
+# Secrets and configs
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data and logs
+data/
+build.log
+*.log
+airflow/logs/
+airflow/config/
+airflow/plugins/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
